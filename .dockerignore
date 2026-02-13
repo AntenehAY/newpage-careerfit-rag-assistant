@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+env
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data (mounted as volume at runtime)
+data/
+vectordb/
+chroma_db/
+*.chroma
+
+# IDE
+.idea
+.vscode
+
+# Documentation source (optional - exclude if not needed in image)
+# docs/
+# notebooks/
+
+# Test files (optional - exclude for smaller image)
+# tests/
+
+# Misc
+*.md
+!README.md
