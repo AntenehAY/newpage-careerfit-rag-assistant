@@ -67,6 +67,9 @@ env/
 data/
 vectordb/
 
+# Logs
+logs/
+
 # ChromaDB persistence
 chroma_db/
 *.chroma

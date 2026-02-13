@@ -1,16 +1,21 @@
 """FastAPI application entry point for Career Intelligence Assistant."""
 
-import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import router
+from app.config import settings
+from app.utils.logging import clear_request_context, get_logger, set_request_context, setup_logging
+from app.utils.metrics import get_metrics
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _create_dirs() -> None:
@@ -22,10 +27,32 @@ def _create_dirs() -> None:
     logger.info("Data directories initialized")
 
 
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Middleware to add request ID, set logging context, and record API metrics."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = str(uuid.uuid4())
+        user_id = request.client.host if request.client else "unknown"
+        set_request_context(
+            request_id=request_id,
+            user_id=user_id,
+            operation=request.url.path,
+        )
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+            metrics = get_metrics()
+            metrics.record_api_request(request.url.path, response.status_code, time.perf_counter() - start)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            clear_request_context()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup: Initialize vector store, create data dirs
+    setup_logging(log_level=settings.log_level)
     _create_dirs()
     logger.info("Application startup complete")
     yield
@@ -39,6 +66,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Request ID and observability middleware (innermost = runs last before route)
+app.add_middleware(RequestIdMiddleware)
 
 # CORS middleware - allow all origins for development
 app.add_middleware(
@@ -74,7 +104,7 @@ async def server_error_handler(request: Request, exc: Exception) -> JSONResponse
             status_code=exc.status_code,
             content={"detail": exc.detail},
         )
-    logger.exception("Server error: %s", exc)
+    logger.exception("Server error: {}", exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "An internal server error occurred"},
@@ -99,6 +129,7 @@ def root() -> str:
             <li><a href="/api/health">/api/health</a> — API health with components</li>
             <li><a href="/api/stats">/api/stats</a> — System statistics</li>
             <li><a href="/docs">/docs</a> — Interactive API documentation</li>
+            <li><a href="/metrics">/metrics</a> — Observability metrics</li>
         </ul>
     </body>
     </html>
@@ -109,3 +140,9 @@ def root() -> str:
 def health_check() -> dict[str, str]:
     """Simple health check endpoint (legacy)."""
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> dict:
+    """Return aggregated observability metrics summary."""
+    return get_metrics().get_metrics_summary()

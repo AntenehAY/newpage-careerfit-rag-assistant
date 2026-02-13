@@ -1,6 +1,5 @@
 """FastAPI endpoints for Career Intelligence Assistant."""
 
-import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +12,9 @@ from app.api.document_registry import DocumentRegistry
 from app.ingestion.pipeline import ingest_document
 from app.models import DocumentUpload, QueryRequest, QueryResponse
 from app.retrieval.vector_store import VectorStore
+from app.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["career-intelligence"])
 
@@ -47,14 +47,14 @@ async def upload_document(
     Accepts .pdf and .docx files. Returns DocumentUpload with file_id and status.
     """
     if doc_type not in ("resume", "job_description"):
-        logger.warning("Invalid doc_type: %s", doc_type)
+        logger.warning("Invalid doc_type: {}", doc_type)
         raise HTTPException(status_code=400, detail="doc_type must be 'resume' or 'job_description'")
 
     # Validate file extension
     original_filename = file.filename or "unknown"
     ext = Path(original_filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
-        logger.warning("Rejected file with unsupported extension: %s", ext)
+        logger.warning("Rejected file with unsupported extension: {}", ext)
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type. Allowed: .pdf, .docx. Got: {ext}",
@@ -74,7 +74,7 @@ async def upload_document(
             raise HTTPException(status_code=400, detail="File is empty")
 
         save_path.write_bytes(content)
-        logger.info("Saved upload: %s (%d bytes)", save_path.name, file_size)
+        logger.info("Saved upload: {} ({} bytes)", save_path.name, file_size)
 
         # Register as processing
         doc_meta = DocumentUpload(
@@ -107,7 +107,7 @@ async def upload_document(
         )
         registry.add(doc_meta)
 
-        logger.info("Upload complete: file_id=%s, status=%s, chunks=%d", file_id, status, len(chunks))
+        logger.info("Upload complete: file_id={}, status={}, chunks={}", file_id, status, len(chunks))
         return doc_meta
 
     except HTTPException:
@@ -115,7 +115,7 @@ async def upload_document(
             save_path.unlink(missing_ok=True)
         raise
     except Exception as e:
-        logger.exception("Upload failed: %s", e)
+        logger.exception("Upload failed: {}", e)
         if save_path.exists():
             save_path.unlink(missing_ok=True)
         # Update registry with failed status (we added processing earlier)
@@ -176,7 +176,7 @@ async def delete_document(
     try:
         vector_store.delete_by_doc_id(doc_id)
     except Exception as e:
-        logger.warning("Vector store delete failed for %s: %s", doc_id, e)
+        logger.warning("Vector store delete failed for {}: {}", doc_id, e)
         # Continue to remove file and registry entry
 
     # Remove file from uploads
@@ -205,7 +205,7 @@ async def health_check(
             },
         }
     except Exception as e:
-        logger.warning("Health check failed: %s", e)
+        logger.warning("Health check failed: {}", e)
         return {
             "status": "degraded",
             "components": {"vector_db": "error", "error": str(e)},

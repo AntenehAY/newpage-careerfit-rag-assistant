@@ -1,13 +1,15 @@
 """Smart retrieval with MMR diversity reranking and LLM-ready context formatting."""
 
-import logging
 import math
 import time
 from typing import Any, List, Optional
 
 from app.config import settings
+from app.utils.logging import get_logger
+from app.utils.metrics import get_metrics
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+metrics = get_metrics()
 
 # Estimate ~4 chars per token for common models
 CHARS_PER_TOKEN = 4
@@ -80,7 +82,8 @@ class Retriever:
 
         if not results:
             elapsed = time.perf_counter() - t0
-            logger.info("retrieve_for_query: 0 results in %.3fs for query='%s'", elapsed, query[:50])
+            logger.info("retrieve_for_query: 0 results in {:.3f}s for query='{}'", elapsed, query[:50])
+            metrics.record_retrieval(query=query[:100], duration=elapsed, chunks_returned=0)
             return []
 
         reranked = self._apply_mmr(results, query=query, lambda_param=0.5)
@@ -88,11 +91,12 @@ class Retriever:
 
         elapsed = time.perf_counter() - t0
         logger.info(
-            "retrieve_for_query: %d chunks in %.3fs (query='%s')",
+            "retrieve_for_query: {} chunks in {:.3f}s (query='{}')",
             len(final),
             elapsed,
             query[:50],
         )
+        metrics.record_retrieval(query=query[:100], duration=elapsed, chunks_returned=len(final))
         return final
 
     def _apply_mmr(
@@ -206,7 +210,7 @@ class Retriever:
         ]
 
         logger.info(
-            "get_context_for_llm: %d chunks, ~%d tokens",
+            "get_context_for_llm: {} chunks, ~{} tokens",
             len(result_chunks),
             _estimate_tokens(context),
         )

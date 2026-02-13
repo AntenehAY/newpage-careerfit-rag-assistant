@@ -1,6 +1,5 @@
 """RAG chain orchestrating retrieval and LLM generation for career advice."""
 
-import logging
 import re
 import time
 from datetime import datetime, timezone
@@ -10,6 +9,8 @@ from langchain_anthropic import ChatAnthropic
 
 from app.config import settings
 from app.models import QueryResponse, SourceReference
+from app.utils.logging import get_logger
+from app.utils.metrics import get_metrics
 
 from .guardrails import (
     RateLimiter,
@@ -19,7 +20,8 @@ from .guardrails import (
 )
 from .prompts import get_prompt_for_type
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+metrics = get_metrics()
 
 
 # Heuristics for query type detection
@@ -98,11 +100,13 @@ class RAGChain:
         # Step 0: Input validation
         validation = validate_query(query)
         if not validation["valid"]:
+            metrics.record_error("validation_failure", {"reason": validation["reason"]})
             return get_fallback_response(validation["reason"])
 
         # Step 0b: Rate limiting
         if self.rate_limiter is not None:
             if not self.rate_limiter.check_rate_limit(user_id):
+                metrics.record_error("rate_limit", {"user_id": user_id})
                 return get_fallback_response("Rate limit exceeded")
 
         query_to_use = validation["sanitized_query"]
@@ -119,7 +123,8 @@ class RAGChain:
         sources_raw = context_result["sources"]
 
         if not context or not context.strip():
-            logger.warning("No context retrieved for query (len=%d)", len(query_to_use))
+            logger.warning("No context retrieved for query (len={})", len(query_to_use))
+            metrics.record_error("no_context", {"query_len": len(query_to_use)})
             return get_fallback_response("No relevant information found")
 
         # Step 2: Detect query type and select prompt
@@ -137,26 +142,43 @@ class RAGChain:
         except Exception as e:
             err_msg = str(e).lower()
             if "rate" in err_msg or "429" in err_msg or "overloaded" in err_msg:
-                logger.warning("LLM rate limit or overload: %s", e)
+                logger.warning("LLM rate limit or overload: {}", e)
+                metrics.record_error("llm_rate_limit", {"error": str(e)})
                 raise RuntimeError(
                     "The AI service is currently busy. Please try again in a few moments."
                 ) from e
-            logger.exception("LLM invocation failed: %s", e)
+            logger.exception("LLM invocation failed: {}", e)
+            metrics.record_error("llm_failure", {"error": str(e)})
             raise
         elapsed_llm = time.perf_counter() - t_llm
 
-        # Optional: log token usage if available
+        # Log token usage and record metrics (ensure int to avoid MagicMock in tests)
+        input_tokens = 0
+        output_tokens = 0
         if hasattr(response, "response_metadata") and response.response_metadata:
-            usage = response.response_metadata.get("usage", {})
-            if usage:
+            usage = response.response_metadata.get("usage") or {}
+            if isinstance(usage, dict):
+                it = usage.get("input_tokens")
+                ot = usage.get("output_tokens")
+                if isinstance(it, int) and it >= 0:
+                    input_tokens = it
+                if isinstance(ot, int) and ot >= 0:
+                    output_tokens = ot
                 logger.info(
-                    "LLM usage: input_tokens=%s, output_tokens=%s",
-                    usage.get("input_tokens"),
-                    usage.get("output_tokens"),
+                    "LLM usage: input_tokens={}, output_tokens={}",
+                    input_tokens,
+                    output_tokens,
                 )
+                metrics.record_llm_call_detailed(
+                    duration=elapsed_llm,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+        else:
+            metrics.record_llm_call(duration=elapsed_llm, tokens_used=0, cost=0.0)
 
         logger.info(
-            "RAG answer_query: retrieval=%.3fs, llm=%.3fs, total=%.3fs",
+            "RAG answer_query: retrieval={:.3f}s, llm={:.3f}s, total={:.3f}s",
             elapsed_ret,
             elapsed_llm,
             time.perf_counter() - t_total,
@@ -165,7 +187,8 @@ class RAGChain:
         # Step 5: Output validation
         output_validation = validate_response(llm_output, sources_raw)
         if not output_validation["valid"]:
-            logger.warning("Response validation failed: %s", output_validation["reason"])
+            logger.warning("Response validation failed: {}", output_validation["reason"])
+            metrics.record_error("response_validation", {"reason": output_validation["reason"]})
             return get_fallback_response(output_validation["reason"])
 
         # Step 6: Parse response and map citations to sources

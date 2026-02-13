@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from app.config import settings
+from app.utils.logging import get_logger
+from app.utils.metrics import get_metrics
 
 if TYPE_CHECKING:
     from app.retrieval.vector_store import VectorStore
@@ -16,7 +17,8 @@ from app.models import ChunkMetadata
 from .chunker import chunk_document
 from .parsers import parse_document
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+metrics = get_metrics()
 
 
 def ingest_document(
@@ -63,10 +65,11 @@ def ingest_document(
         t_parse = time.perf_counter()
         text = parse_document(str(path))
         parse_elapsed = time.perf_counter() - t_parse
-        logger.info("Stage 1 (parse) completed in %.3fs for %s", parse_elapsed, path.name)
+        logger.info("Stage 1 (parse) completed in {:.3f}s for {}", parse_elapsed, path.name)
+        logger.debug("Parse output: {} chars", len(text) if text else 0)
 
         if not text or not text.strip():
-            logger.warning("Document parsed to empty text: %s", path.name)
+            logger.warning("Document parsed to empty text: {}", path.name)
             return []
 
         # Step 2: Chunk
@@ -74,7 +77,8 @@ def ingest_document(
         metadata = {"doc_id": doc_id, "doc_type": doc_type}
         chunks = chunk_document(text, metadata, chunk_size, chunk_overlap)
         chunk_elapsed = time.perf_counter() - t_chunk
-        logger.info("Stage 2 (chunk) completed in %.3fs: %d chunks", chunk_elapsed, len(chunks))
+        logger.info("Stage 2 (chunk) completed in {:.3f}s: {} chunks", chunk_elapsed, len(chunks))
+        logger.debug("Chunk details: sizes ~{} chars avg", sum(c.char_end - c.char_start for c in chunks) // len(chunks) if chunks else 0)
 
         # Step 3 (optional): Store in vector DB
         if store_in_vector_db and chunks:
@@ -95,20 +99,25 @@ def ingest_document(
                     )
                 chunk_texts = [text[c.char_start : c.char_end] for c in chunks]
                 vs.add_documents(chunks, chunk_texts)
-                logger.info("Stored %d chunks in vector DB", len(chunks))
+                logger.info("Stored {} chunks in vector DB", len(chunks))
             except Exception as e:
-                logger.exception("Vector DB storage failed (chunks still returned): %s", e)
+                logger.exception("Vector DB storage failed (chunks still returned): {}", e)
+                metrics.record_error("vector_db_storage", {"doc_id": doc_id})
 
         total_elapsed = time.perf_counter() - t0
-        logger.info("Ingestion complete for %s in %.3fs total", path.name, total_elapsed)
+        logger.info("Ingestion complete for {} in {:.3f}s total", path.name, total_elapsed)
+        metrics.record_ingestion(doc_id=doc_id, duration=total_elapsed, chunk_count=len(chunks))
         return chunks
 
     except FileNotFoundError:
-        logger.error("File not found: %s", file_path)
+        logger.error("File not found: {}", file_path)
+        metrics.record_error("file_not_found", {"file_path": file_path})
         return []
     except ValueError as e:
-        logger.error("Ingestion failed for %s: %s", path.name, e)
+        logger.error("Ingestion failed for {}: {}", path.name, e)
+        metrics.record_error("validation_failure", {"path": path.name, "error": str(e)})
         return []
     except Exception as e:
-        logger.exception("Unexpected error ingesting %s: %s", path.name, e)
+        logger.exception("Unexpected error ingesting {}: {}", path.name, e)
+        metrics.record_error("ingestion_error", {"path": path.name, "error": str(e)})
         return []
