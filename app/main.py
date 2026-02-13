@@ -1,17 +1,22 @@
 """FastAPI application entry point for Career Intelligence Assistant."""
 
+import shutil
 import time
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.dependencies import get_embedding_service, get_vector_store
 from app.api.routes import router
 from app.config import settings
+from app.retrieval.embeddings import EmbeddingService
+from app.retrieval.vector_store import VectorStore
 from app.utils.logging import clear_request_context, get_logger, set_request_context, setup_logging
 from app.utils.metrics import get_metrics
 
@@ -137,9 +142,62 @@ def root() -> str:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    """Simple health check endpoint (legacy)."""
-    return {"status": "ok"}
+def health_check(
+    vector_store: VectorStore = Depends(get_vector_store),
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+) -> dict:
+    """Health check with vector DB, embedding service, and disk space status.
+    Used by Docker HEALTHCHECK and orchestration.
+    Returns 200 with status 'ok' or 'degraded' and component details.
+    """
+    components: dict = {}
+    status = "ok"
+
+    # 1. Vector DB connection
+    try:
+        stats = vector_store.get_collection_stats()
+        components["vector_db"] = {
+            "status": "ok",
+            "collection": stats.get("collection_name", "careerfit_chunks"),
+            "chunk_count": stats.get("count", 0),
+        }
+    except Exception as e:
+        logger.warning("Health check: vector_db error: {}", e)
+        components["vector_db"] = {"status": "error", "error": str(e)}
+        status = "degraded"
+
+    # 2. Embedding service (lightweight: single cached embed)
+    try:
+        embedding_service.embed_text("health", use_cache=True)
+        components["embedding_service"] = {"status": "ok"}
+    except Exception as e:
+        logger.warning("Health check: embedding_service error: {}", e)
+        components["embedding_service"] = {"status": "error", "error": str(e)}
+        status = "degraded"
+
+    # 3. Disk space (data directory)
+    try:
+        data_path = Path(settings.vector_db_path).resolve().parent
+        if not data_path.exists():
+            data_path = Path("/app/data").resolve() if Path("/app/data").exists() else Path(".").resolve()
+        usage = shutil.disk_usage(data_path)
+        free_gb = usage.free / (1024**3)
+        components["disk"] = {
+            "status": "ok" if free_gb > 0.5 else "low",
+            "free_gb": round(free_gb, 2),
+            "total_gb": round(usage.total / (1024**3), 2),
+        }
+        if free_gb < 0.5:
+            status = "degraded"
+    except Exception as e:
+        logger.warning("Health check: disk error: {}", e)
+        components["disk"] = {"status": "error", "error": str(e)}
+        status = "degraded"
+
+    return {
+        "status": status,
+        "components": components,
+    }
 
 
 @app.get("/metrics")

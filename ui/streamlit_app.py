@@ -3,6 +3,7 @@
 Step 9: Document upload, chat interface, and RAG query integration.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import httpx
 import streamlit as st
 
 # --- Constants ---
-DEFAULT_API_URL = "http://localhost:8000"
+DEFAULT_API_URL = os.environ.get("API_URL", "http://localhost:8000")
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 DOC_TYPES = ["resume", "job_description"]
 

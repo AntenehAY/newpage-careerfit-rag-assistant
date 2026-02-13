@@ -24,3 +24,25 @@ uvicorn app.main:app --reload
 # Run UI (in separate terminal)
 streamlit run ui/streamlit_app.py
 ```
+
+## Docker Deployment
+
+**Quick start with Docker:**
+
+```bash
+cp .env.docker.example .env
+# Edit .env with your API keys
+
+docker-compose up -d --build
+```
+
+- **API:** http://localhost:8000
+- **UI:** http://localhost:8501
+
+**Helper scripts:** `build.ps1`, `run.ps1`, `stop.ps1`, `logs.ps1` (or `.sh` on Unix)
+
+**Configuration:** See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for:
+- Environment variables
+- Volume management and backups
+- Health checks and monitoring
+- Production considerations and scaling

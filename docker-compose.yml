@@ -1,0 +1,54 @@
+# Career Intelligence Assistant - Docker Compose
+# Production-ready deployment with API and optional Streamlit UI
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: careerfit-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - VECTOR_DB_PATH=/app/data/vectordb
+    volumes:
+      - careerfit_data:/app/data
+      - careerfit_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - careerfit-network
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: careerfit-ui
+    command: ["streamlit", "run", "ui/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - careerfit-network
+
+networks:
+  careerfit-network:
+    driver: bridge
+
+volumes:
+  careerfit_data:
+    driver: local
+  careerfit_logs:
+    driver: local

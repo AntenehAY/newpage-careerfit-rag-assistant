@@ -1,5 +1,10 @@
-"""API unit tests - route handlers with mocked dependencies."""
+"""API integration tests for Career Intelligence Assistant.
 
+Tests POST /upload, POST /query, GET /documents, DELETE /documents, GET /stats
+using TestClient with mocked dependencies.
+"""
+
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +18,9 @@ from app.api.routes import get_registry
 from app.main import app
 from app.models import DocumentUpload, QueryResponse, SourceReference
 from app.rag.guardrails import get_fallback_response
+
+
+# --- Fixtures ---
 
 
 @pytest.fixture
@@ -94,10 +102,13 @@ def client(mock_vector_store, mock_rag_chain, mock_embedding_service, temp_regis
 @pytest.fixture
 def sample_pdf_bytes():
     """Minimal valid PDF bytes for upload tests."""
+    # Minimal PDF structure (header + minimal body)
     return b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF"
 
 
-@pytest.mark.unit
+# --- Upload Tests ---
+
+
 def test_upload_valid_pdf(client, sample_pdf_bytes):
     """POST /api/upload with valid PDF file."""
     response = client.post(
@@ -113,7 +124,6 @@ def test_upload_valid_pdf(client, sample_pdf_bytes):
     assert data["status"] in ("completed", "processing", "failed")
 
 
-@pytest.mark.unit
 def test_upload_invalid_file_type(client):
     """POST /api/upload with invalid file type (.txt) returns 400."""
     response = client.post(
@@ -125,7 +135,6 @@ def test_upload_invalid_file_type(client):
     assert "Invalid file type" in response.json().get("detail", "")
 
 
-@pytest.mark.unit
 def test_upload_invalid_doc_type(client, sample_pdf_bytes):
     """POST /api/upload with invalid doc_type returns 400."""
     response = client.post(
@@ -137,7 +146,9 @@ def test_upload_invalid_doc_type(client, sample_pdf_bytes):
     assert "doc_type" in response.json().get("detail", "")
 
 
-@pytest.mark.unit
+# --- Query Tests ---
+
+
 def test_query_valid(client):
     """POST /api/query with valid request."""
     response = client.post(
@@ -151,7 +162,6 @@ def test_query_valid(client):
     assert "This is a test answer" in data.get("answer", "")
 
 
-@pytest.mark.unit
 def test_query_with_filters(client):
     """POST /api/query with filter_doc_type and filter_doc_id."""
     response = client.post(
@@ -166,53 +176,46 @@ def test_query_with_filters(client):
     assert response.status_code == 200
 
 
-@pytest.mark.unit
 def test_query_invalid_too_short(client):
     """POST /api/query with query too short returns fallback (RAG handles it)."""
     response = client.post("/api/query", json={"query": "ab"})
+    # RAG chain validates and returns fallback - either 200 with fallback or 400
     assert response.status_code in (200, 400)
 
 
-@pytest.mark.unit
 def test_query_rate_limit(client):
-    """POST /api/query when RAG returns rate limit fallback yields 200."""
+    """POST /api/query when RAG returns rate limit fallback yields 200 with message."""
     fallback = get_fallback_response("Rate limit exceeded")
     mock_chain = MagicMock()
     mock_chain.answer_query = MagicMock(return_value=fallback)
 
     app.dependency_overrides[get_rag_chain] = lambda: mock_chain
     try:
-        response = client.post(
-            "/api/query", json={"query": "What are my skills?"}
-        )
+        response = client.post("/api/query", json={"query": "What are my skills?"})
         assert response.status_code == 200
-        answer = response.json().get("answer", "").lower()
-        assert "wait" in answer or "rate" in answer
+        assert "wait" in response.json().get("answer", "").lower() or "rate" in response.json().get("answer", "").lower()
     finally:
         app.dependency_overrides.pop(get_rag_chain, None)
 
 
-@pytest.mark.unit
 def test_query_raises_429_when_llm_rate_limited(client):
     """POST /api/query when LLM raises rate limit returns 429."""
     mock_chain = MagicMock()
     mock_chain.answer_query = MagicMock(
-        side_effect=RuntimeError(
-            "The AI service is currently busy. Please try again."
-        )
+        side_effect=RuntimeError("The AI service is currently busy. Please try again.")
     )
 
     app.dependency_overrides[get_rag_chain] = lambda: mock_chain
     try:
-        response = client.post(
-            "/api/query", json={"query": "What are my skills?"}
-        )
+        response = client.post("/api/query", json={"query": "What are my skills?"})
         assert response.status_code == 429
     finally:
         app.dependency_overrides.pop(get_rag_chain, None)
 
 
-@pytest.mark.unit
+# --- Documents Tests ---
+
+
 def test_list_documents_empty(client):
     """GET /api/documents returns empty list when no uploads."""
     response = client.get("/api/documents")
@@ -220,9 +223,9 @@ def test_list_documents_empty(client):
     assert response.json() == []
 
 
-@pytest.mark.unit
-def test_list_documents_after_upload(client, temp_registry):
+def test_list_documents_after_upload(client, sample_pdf_bytes, temp_registry):
     """GET /api/documents returns uploaded documents."""
+    # Add a document directly to registry (simulate upload)
     doc = DocumentUpload(
         file_id="test-id-123",
         file_name="resume.pdf",
@@ -240,14 +243,15 @@ def test_list_documents_after_upload(client, temp_registry):
     assert any(d["file_id"] == "test-id-123" for d in data)
 
 
-@pytest.mark.unit
+# --- Delete Tests ---
+
+
 def test_delete_document_not_found(client):
     """DELETE /api/documents/{doc_id} returns 404 when document not found."""
     response = client.delete("/api/documents/nonexistent-id")
     assert response.status_code == 404
 
 
-@pytest.mark.unit
 def test_delete_document_success(client, temp_registry, temp_uploads_dir):
     """DELETE /api/documents/{doc_id} removes document."""
     doc_id = "doc-to-delete"
@@ -268,7 +272,9 @@ def test_delete_document_success(client, temp_registry, temp_uploads_dir):
     assert response.json()["message"] == f"Document {doc_id} deleted"
 
 
-@pytest.mark.unit
+# --- Stats Tests ---
+
+
 def test_stats(client, mock_vector_store):
     """GET /api/stats returns system stats."""
     mock_vector_store.get_collection_stats.return_value = {
@@ -286,7 +292,9 @@ def test_stats(client, mock_vector_store):
     assert "vector_db" in data
 
 
-@pytest.mark.unit
+# --- Health Tests ---
+
+
 def test_health_simple(client):
     """GET /health returns status and components."""
     response = client.get("/health")
@@ -300,7 +308,6 @@ def test_health_simple(client):
     assert "disk" in data["components"]
 
 
-@pytest.mark.unit
 def test_health_api_with_components(client):
     """GET /api/health returns status and components."""
     response = client.get("/api/health")
@@ -311,7 +318,9 @@ def test_health_api_with_components(client):
     assert data["status"] in ("ok", "degraded")
 
 
-@pytest.mark.unit
+# --- Root ---
+
+
 def test_root_returns_html(client):
     """GET / returns HTML status page."""
     response = client.get("/")
