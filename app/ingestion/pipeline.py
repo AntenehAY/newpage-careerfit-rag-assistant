@@ -1,11 +1,16 @@
 """End-to-end document ingestion pipeline."""
 
+from __future__ import annotations
+
 import logging
 import time
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.retrieval.vector_store import VectorStore
 from app.models import ChunkMetadata
 
 from .chunker import chunk_document
@@ -21,6 +26,7 @@ def ingest_document(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
     store_in_vector_db: bool = False,
+    vector_store: "VectorStore | None" = None,
 ) -> list[ChunkMetadata]:
     """Ingest a document: parse, chunk, and return chunks with full metadata.
 
@@ -39,6 +45,7 @@ def ingest_document(
         chunk_size: Maximum characters per chunk.
         chunk_overlap: Overlap between consecutive chunks.
         store_in_vector_db: If True, embed chunks and store in ChromaDB after ingestion.
+        vector_store: Optional VectorStore to use. If provided, store_in_vector_db uses it.
 
     Returns:
         List of ChunkMetadata. Empty list on parse/chunk error.
@@ -72,20 +79,22 @@ def ingest_document(
         # Step 3 (optional): Store in vector DB
         if store_in_vector_db and chunks:
             try:
-                from app.retrieval.embeddings import EmbeddingService
-                from app.retrieval.vector_store import VectorStore
+                vs = vector_store
+                if vs is None:
+                    from app.retrieval.embeddings import EmbeddingService
+                    from app.retrieval.vector_store import VectorStore
 
-                embedding_svc = EmbeddingService(
-                    model_name=settings.embedding_model_name,
-                    api_key=settings.openai_api_key,
-                )
-                vector_store = VectorStore(
-                    collection_name="careerfit_chunks",
-                    persist_directory=settings.vector_db_path,
-                    embedding_service=embedding_svc,
-                )
+                    embedding_svc = EmbeddingService(
+                        model_name=settings.embedding_model_name,
+                        api_key=settings.openai_api_key,
+                    )
+                    vs = VectorStore(
+                        collection_name="careerfit_chunks",
+                        persist_directory=settings.vector_db_path,
+                        embedding_service=embedding_svc,
+                    )
                 chunk_texts = [text[c.char_start : c.char_end] for c in chunks]
-                vector_store.add_documents(chunks, chunk_texts)
+                vs.add_documents(chunks, chunk_texts)
                 logger.info("Stored %d chunks in vector DB", len(chunks))
             except Exception as e:
                 logger.exception("Vector DB storage failed (chunks still returned): %s", e)
