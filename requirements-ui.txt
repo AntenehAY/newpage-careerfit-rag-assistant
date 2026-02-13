@@ -1,0 +1,6 @@
+# UI-specific dependencies for Career Intelligence Assistant
+# The main requirements.txt already includes streamlit and httpx.
+# Use this if you want a minimal UI-only install (requires API running separately).
+
+streamlit>=1.30.0
+httpx>=0.26.0
