@@ -14,12 +14,14 @@ from app.models import (
 )
 
 
+@pytest.mark.unit
 class TestConfig:
     """Verify app/config.py loads and validates correctly."""
 
     def test_settings_singleton(self):
         """settings is a valid singleton instance."""
         from app.config import settings as s2
+
         assert settings is s2
 
     def test_required_api_keys_present(self):
@@ -52,6 +54,7 @@ class TestConfig:
         assert settings.log_level == "INFO"
 
 
+@pytest.mark.unit
 class TestModels:
     """Verify app/models.py schemas work correctly."""
 

@@ -10,6 +10,7 @@ from app.ingestion.parsers import parse_docx, parse_document, parse_pdf
 from app.ingestion.pipeline import ingest_document
 
 
+@pytest.mark.unit
 class TestParsers:
     """Tests for app/ingestion/parsers.py."""
 
@@ -62,7 +63,23 @@ class TestParsers:
         with pytest.raises(ValueError, match="Failed to parse DOCX"):
             parse_docx(str(bad))
 
+    def test_parse_pdf_empty_file(self, tmp_path: Path) -> None:
+        """parse_pdf with minimal/empty PDF handles gracefully."""
+        # Minimal valid PDF structure - may return empty or minimal text
+        minimal_pdf = tmp_path / "empty.pdf"
+        minimal_pdf.write_bytes(
+            b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+            b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n"
+            b"xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n"
+            b"0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\n"
+            b"startxref\n178\n%%EOF"
+        )
+        text = parse_pdf(str(minimal_pdf))
+        assert isinstance(text, str)
 
+
+@pytest.mark.unit
 class TestChunker:
     """Tests for app/ingestion/chunker.py."""
 
@@ -105,7 +122,23 @@ class TestChunker:
         chunks = chunk_document("   \n\n   ", {"doc_id": "x", "doc_type": "resume"})
         assert chunks == []
 
+    def test_chunk_document_single_char(self) -> None:
+        """chunk_document with single character returns one chunk."""
+        chunks = chunk_document("x", {"doc_id": "doc", "doc_type": "resume"})
+        assert len(chunks) == 1
+        assert chunks[0].char_start == 0
+        assert chunks[0].char_end == 1
 
+    def test_chunk_document_boundary_chunk_size(self) -> None:
+        """chunk_document with text exactly at chunk_size boundary."""
+        text = "a" * 100
+        metadata = {"doc_id": "d1", "doc_type": "resume"}
+        chunks = chunk_document(text, metadata, chunk_size=100, chunk_overlap=0)
+        assert len(chunks) >= 1
+        assert chunks[0].char_end - chunks[0].char_start <= 100
+
+
+@pytest.mark.unit
 class TestPipeline:
     """Tests for app/ingestion/pipeline.py."""
 
@@ -140,14 +173,18 @@ class TestPipeline:
         )
         assert chunks == []
 
-    def test_ingest_document_unsupported_format_returns_empty_list(self, tmp_path: Path) -> None:
+    def test_ingest_document_unsupported_format_returns_empty_list(
+        self, tmp_path: Path
+    ) -> None:
         """ingest_document returns empty list for unsupported format."""
         bad = tmp_path / "file.xyz"
         bad.write_text("dummy")
         chunks = ingest_document(str(bad), doc_type="resume", doc_id="x")
         assert chunks == []
 
-    def test_ingest_document_uses_custom_chunk_params(self, sample_jd_docx: Path) -> None:
+    def test_ingest_document_uses_custom_chunk_params(
+        self, sample_jd_docx: Path
+    ) -> None:
         """ingest_document respects chunk_size and chunk_overlap."""
         chunks_small = ingest_document(
             str(sample_jd_docx),
@@ -169,8 +206,8 @@ class TestPipeline:
     @patch("app.retrieval.embeddings.EmbeddingService")
     def test_ingest_document_store_in_vector_db(
         self,
-        mock_embedding_svc_class: MagicMock,  # 1st arg = EmbeddingService (inner patch)
-        mock_vector_store_class: MagicMock,  # 2nd arg = VectorStore (outer patch)
+        mock_embedding_svc_class: MagicMock,
+        mock_vector_store_class: MagicMock,
         sample_jd_docx: Path,
     ) -> None:
         """ingest_document with store_in_vector_db=True calls VectorStore.add_documents."""
@@ -190,7 +227,16 @@ class TestPipeline:
         assert call_args[0][0] == chunks
         assert len(call_args[0][1]) == len(chunks)
 
+    def test_ingest_document_malformed_pdf_returns_empty(self, tmp_path: Path) -> None:
+        """ingest_document with malformed PDF returns empty list (error recovery)."""
+        bad_pdf = tmp_path / "bad.pdf"
+        bad_pdf.write_bytes(b"not a valid pdf content at all")
+        # Pipeline catches ValueError from parse_pdf and returns []
+        chunks = ingest_document(str(bad_pdf), doc_type="resume", doc_id="bad")
+        assert chunks == []
 
+
+@pytest.mark.unit
 class TestChunkerWithSampleText:
     """Chunker tests using sample_resume.txt content."""
 

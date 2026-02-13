@@ -15,9 +15,6 @@ from app.rag.prompts import (
 )
 
 
-# --- Fixtures ---
-
-
 @pytest.fixture
 def mock_retriever():
     """Retriever that returns controlled context and sources."""
@@ -79,9 +76,7 @@ def empty_context_retriever():
     return ret
 
 
-# --- Prompt Template Formatting ---
-
-
+@pytest.mark.unit
 class TestPromptTemplates:
     """Test prompt template formatting and structure."""
 
@@ -138,9 +133,7 @@ class TestPromptTemplates:
         assert get_prompt_for_type("unknown") == GENERAL_CAREER_PROMPT
 
 
-# --- Query Type Detection ---
-
-
+@pytest.mark.unit
 class TestQueryTypeDetection:
     """Test _detect_query_type heuristics."""
 
@@ -161,37 +154,64 @@ class TestQueryTypeDetection:
 
     def test_detect_skill_gap(self, chain_with_mock_llm):
         """Queries about skills/gaps map to skill_gap."""
-        assert chain_with_mock_llm._detect_query_type("What skills am I missing?") == "skill_gap"
+        assert (
+            chain_with_mock_llm._detect_query_type("What skills am I missing?")
+            == "skill_gap"
+        )
         assert chain_with_mock_llm._detect_query_type("skill gaps") == "skill_gap"
-        assert chain_with_mock_llm._detect_query_type("qualifications required") == "skill_gap"
+        assert (
+            chain_with_mock_llm._detect_query_type("qualifications required")
+            == "skill_gap"
+        )
 
     def test_detect_experience_alignment(self, chain_with_mock_llm):
         """Queries about experience/alignment map to experience_alignment."""
-        assert chain_with_mock_llm._detect_query_type("How does my experience align?") == "experience_alignment"
-        assert chain_with_mock_llm._detect_query_type("Do I match the job?") == "experience_alignment"
-        assert chain_with_mock_llm._detect_query_type("years of background") == "experience_alignment"
+        assert (
+            chain_with_mock_llm._detect_query_type("How does my experience align?")
+            == "experience_alignment"
+        )
+        assert (
+            chain_with_mock_llm._detect_query_type("Do I match the job?")
+            == "experience_alignment"
+        )
+        assert (
+            chain_with_mock_llm._detect_query_type("years of background")
+            == "experience_alignment"
+        )
 
     def test_detect_interview_prep(self, chain_with_mock_llm):
         """Queries about interviews map to interview_prep."""
-        assert chain_with_mock_llm._detect_query_type("What interview questions should I expect?") == "interview_prep"
-        assert chain_with_mock_llm._detect_query_type("prepare for interview") == "interview_prep"
-        assert chain_with_mock_llm._detect_query_type("talking points and weaknesses") == "interview_prep"
+        assert (
+            chain_with_mock_llm._detect_query_type(
+                "What interview questions should I expect?"
+            )
+            == "interview_prep"
+        )
+        assert (
+            chain_with_mock_llm._detect_query_type("prepare for interview")
+            == "interview_prep"
+        )
+        assert (
+            chain_with_mock_llm._detect_query_type("talking points and weaknesses")
+            == "interview_prep"
+        )
 
     def test_detect_general(self, chain_with_mock_llm):
         """Unrelated queries map to general."""
         assert chain_with_mock_llm._detect_query_type("Hello") == "general"
-        assert chain_with_mock_llm._detect_query_type("Summarize my resume") == "general"
+        assert (
+            chain_with_mock_llm._detect_query_type("Summarize my resume")
+            == "general"
+        )
 
 
-# --- Response Parsing ---
-
-
+@pytest.mark.unit
 class TestResponseParsing:
     """Test _parse_response extraction and source mapping."""
 
     @pytest.fixture
     def chain_with_mock_llm(self, mock_retriever):
-        with patch("app.rag.chain.ChatAnthropic") as MockLLM:
+        with patch("app.rag.chain.ChatAnthropic"):
             chain = RAGChain(
                 retriever=mock_retriever,
                 llm_model="claude-test",
@@ -214,10 +234,24 @@ class TestResponseParsing:
     def test_parse_maps_citations_to_sources(self, chain_with_mock_llm):
         """Cited sources are included as SourceReference objects."""
         sources_raw = [
-            {"doc_id": "d1", "doc_name": "Doc1", "doc_type": "resume", "chunk_text": "Text1", "relevance_score": 0.9},
-            {"doc_id": "d2", "doc_name": "Doc2", "doc_type": "jd", "chunk_text": "Text2", "relevance_score": 0.8},
+            {
+                "doc_id": "d1",
+                "doc_name": "Doc1",
+                "doc_type": "resume",
+                "chunk_text": "Text1",
+                "relevance_score": 0.9,
+            },
+            {
+                "doc_id": "d2",
+                "doc_name": "Doc2",
+                "doc_type": "jd",
+                "chunk_text": "Text2",
+                "relevance_score": 0.8,
+            },
         ]
-        out = chain_with_mock_llm._parse_response("Answer [Source 2] and [Source 1].", sources_raw)
+        out = chain_with_mock_llm._parse_response(
+            "Answer [Source 2] and [Source 1].", sources_raw
+        )
         refs = out["sources"]
         assert len(refs) == 2
         assert all(isinstance(r, SourceReference) for r in refs)
@@ -227,20 +261,26 @@ class TestResponseParsing:
     def test_parse_includes_confidence(self, chain_with_mock_llm):
         """_parse_response includes optional confidence."""
         sources_raw = [
-            {"doc_id": "d1", "doc_name": "D1", "doc_type": "resume", "chunk_text": "T", "relevance_score": 0.9},
+            {
+                "doc_id": "d1",
+                "doc_name": "D1",
+                "doc_type": "resume",
+                "chunk_text": "T",
+                "relevance_score": 0.9,
+            },
         ]
         out = chain_with_mock_llm._parse_response("Answer [Source 1].", sources_raw)
         assert out.get("confidence") is not None
         assert 0 <= out["confidence"] <= 1.0
 
 
-# --- RAG Chain End-to-End ---
-
-
+@pytest.mark.unit
 class TestRAGChain:
     """Test RAGChain answer_query with mocked retriever and LLM."""
 
-    def test_answer_query_returns_query_response(self, mock_retriever, mock_llm_response):
+    def test_answer_query_returns_query_response(
+        self, mock_retriever, mock_llm_response
+    ):
         """answer_query returns QueryResponse with answer and sources."""
         with patch("app.rag.chain.ChatAnthropic") as MockLLM:
             mock_instance = MagicMock()
@@ -263,9 +303,11 @@ class TestRAGChain:
             assert isinstance(result.sources, list)
             assert result.generated_at is not None
 
-    def test_answer_query_empty_context_returns_fallback(self, empty_context_retriever):
+    def test_answer_query_empty_context_returns_fallback(
+        self, empty_context_retriever
+    ):
         """answer_query with empty context returns helpful fallback message."""
-        with patch("app.rag.chain.ChatAnthropic") as MockLLM:
+        with patch("app.rag.chain.ChatAnthropic"):
             chain = RAGChain(
                 retriever=empty_context_retriever,
                 llm_model="claude-test",
@@ -277,11 +319,16 @@ class TestRAGChain:
             result = chain.answer_query("Any question?")
 
             assert isinstance(result, QueryResponse)
-            assert "uploaded" in result.answer.lower() or "documents" in result.answer.lower()
+            assert (
+                "uploaded" in result.answer.lower()
+                or "documents" in result.answer.lower()
+            )
             assert result.sources == []
             chain.llm.invoke.assert_not_called()
 
-    def test_answer_query_passes_filters_to_retriever(self, mock_retriever, mock_llm_response):
+    def test_answer_query_passes_filters_to_retriever(
+        self, mock_retriever, mock_llm_response
+    ):
         """answer_query passes filter_doc_type and filter_doc_id to retriever."""
         with patch("app.rag.chain.ChatAnthropic") as MockLLM:
             mock_instance = MagicMock()
@@ -306,7 +353,9 @@ class TestRAGChain:
             assert call_kw["filter_doc_type"] == "resume"
             assert call_kw["filter_doc_id"] == "doc_123"
 
-    def test_query_response_structure(self, mock_retriever, mock_llm_response):
+    def test_query_response_structure(
+        self, mock_retriever, mock_llm_response
+    ):
         """QueryResponse has required fields: answer, sources, generated_at."""
         with patch("app.rag.chain.ChatAnthropic") as MockLLM:
             mock_instance = MagicMock()
@@ -335,9 +384,7 @@ class TestRAGChain:
                 assert 0 <= s.relevance_score <= 1.0
 
 
-# --- Streaming ---
-
-
+@pytest.mark.unit
 class TestRAGStreaming:
     """Test answer_query_stream."""
 
@@ -345,11 +392,13 @@ class TestRAGStreaming:
         """answer_query_stream yields text chunks from LLM."""
         with patch("app.rag.chain.ChatAnthropic") as MockLLM:
             mock_instance = MagicMock()
-            mock_instance.stream.return_value = iter([
-                MagicMock(content="First "),
-                MagicMock(content="chunk. "),
-                MagicMock(content="Done."),
-            ])
+            mock_instance.stream.return_value = iter(
+                [
+                    MagicMock(content="First "),
+                    MagicMock(content="chunk. "),
+                    MagicMock(content="Done."),
+                ]
+            )
             MockLLM.return_value = mock_instance
 
             chain = RAGChain(
@@ -376,5 +425,8 @@ class TestRAGStreaming:
             chunks = list(chain.answer_query_stream("Anything"))
 
             assert len(chunks) == 1
-            assert "uploaded" in chunks[0].lower() or "documents" in chunks[0].lower()
+            assert (
+                "uploaded" in chunks[0].lower()
+                or "documents" in chunks[0].lower()
+            )
             chain.llm.stream.assert_not_called()

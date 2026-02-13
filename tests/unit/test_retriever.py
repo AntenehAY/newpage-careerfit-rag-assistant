@@ -12,15 +12,11 @@ from app.retrieval.retriever import (
 )
 
 
-# --- Fixtures ---
-
-
 @pytest.fixture
 def mock_vector_store():
     """Vector store with mocked search and embedding_service."""
     store = MagicMock()
     store.embedding_service = MagicMock()
-    # Default: embed_text returns a simple vector, embed_batch returns list of same
     dim = 4
     store.embedding_service.embed_text.return_value = [1.0, 0.0, 0.0, 0.0]
     store.embedding_service.embed_batch.side_effect = (
@@ -33,15 +29,28 @@ def mock_vector_store():
 def sample_search_results():
     """Sample search results as returned by VectorStore.search."""
     return [
-        {"id": "c1", "text": "Chunk one about Python.", "metadata": {"doc_id": "d1", "doc_type": "resume"}, "score": 0.9},
-        {"id": "c2", "text": "Chunk two about Java.", "metadata": {"doc_id": "d1", "doc_type": "resume"}, "score": 0.8},
-        {"id": "c3", "text": "Chunk three about SQL.", "metadata": {"doc_id": "d2", "doc_type": "job_description"}, "score": 0.75},
+        {
+            "id": "c1",
+            "text": "Chunk one about Python.",
+            "metadata": {"doc_id": "d1", "doc_type": "resume"},
+            "score": 0.9,
+        },
+        {
+            "id": "c2",
+            "text": "Chunk two about Java.",
+            "metadata": {"doc_id": "d1", "doc_type": "resume"},
+            "score": 0.8,
+        },
+        {
+            "id": "c3",
+            "text": "Chunk three about SQL.",
+            "metadata": {"doc_id": "d2", "doc_type": "job_description"},
+            "score": 0.75,
+        },
     ]
 
 
-# --- Basic Retrieval ---
-
-
+@pytest.mark.unit
 class TestRetrieverBasic:
     """Test basic retrieval behavior."""
 
@@ -57,7 +66,9 @@ class TestRetrieverBasic:
         r = Retriever(mock_vector_store, top_k=10)
         assert r.top_k == 10
 
-    def test_retrieve_for_query_calls_search(self, mock_vector_store, sample_search_results):
+    def test_retrieve_for_query_calls_search(
+        self, mock_vector_store, sample_search_results
+    ):
         """retrieve_for_query calls vector_store.search with query and top_k."""
         mock_vector_store.search.return_value = sample_search_results[:2]
         r = Retriever(mock_vector_store, top_k=5)
@@ -65,7 +76,7 @@ class TestRetrieverBasic:
         mock_vector_store.search.assert_called_once()
         call_kwargs = mock_vector_store.search.call_args[1]
         assert call_kwargs["query"] == "Python skills"
-        assert call_kwargs["top_k"] >= 5  # May fetch more for MMR
+        assert call_kwargs["top_k"] >= 5
         assert len(results) <= 5
 
     def test_retrieve_returns_empty_list_when_no_results(self, mock_vector_store):
@@ -76,22 +87,28 @@ class TestRetrieverBasic:
         assert results == []
 
 
-# --- Filters ---
-
-
+@pytest.mark.unit
 class TestRetrieverFilters:
     """Test retrieval with doc_type and doc_id filters."""
 
-    def test_retrieve_with_doc_type_filter(self, mock_vector_store, sample_search_results):
+    def test_retrieve_with_doc_type_filter(
+        self, mock_vector_store, sample_search_results
+    ):
         """retrieve_for_query passes filter_doc_type to search."""
-        filtered = [s for s in sample_search_results if s["metadata"]["doc_type"] == "resume"]
+        filtered = [
+            s
+            for s in sample_search_results
+            if s["metadata"]["doc_type"] == "resume"
+        ]
         mock_vector_store.search.return_value = filtered
         r = Retriever(mock_vector_store, top_k=5)
         r.retrieve_for_query("skills", filter_doc_type="resume")
         call_kwargs = mock_vector_store.search.call_args[1]
         assert call_kwargs["filter_metadata"] == {"doc_type": "resume"}
 
-    def test_retrieve_with_doc_id_filter(self, mock_vector_store, sample_search_results):
+    def test_retrieve_with_doc_id_filter(
+        self, mock_vector_store, sample_search_results
+    ):
         """retrieve_for_query passes filter_doc_id to search."""
         mock_vector_store.search.return_value = sample_search_results[:1]
         r = Retriever(mock_vector_store, top_k=5)
@@ -99,26 +116,37 @@ class TestRetrieverFilters:
         call_kwargs = mock_vector_store.search.call_args[1]
         assert call_kwargs["filter_metadata"] == {"doc_id": "d1"}
 
-    def test_retrieve_with_both_filters(self, mock_vector_store, sample_search_results):
+    def test_retrieve_with_both_filters(
+        self, mock_vector_store, sample_search_results
+    ):
         """retrieve_for_query combines filter_doc_type and filter_doc_id."""
         mock_vector_store.search.return_value = []
         r = Retriever(mock_vector_store, top_k=5)
-        r.retrieve_for_query("test", filter_doc_type="resume", filter_doc_id="d1")
+        r.retrieve_for_query(
+            "test", filter_doc_type="resume", filter_doc_id="d1"
+        )
         call_kwargs = mock_vector_store.search.call_args[1]
-        assert call_kwargs["filter_metadata"] == {"doc_type": "resume", "doc_id": "d1"}
+        assert call_kwargs["filter_metadata"] == {
+            "doc_type": "resume",
+            "doc_id": "d1",
+        }
 
 
-# --- MMR Reranking ---
-
-
+@pytest.mark.unit
 class TestRetrieverMMR:
     """Test MMR reranking behavior."""
 
-    def test_apply_mmr_reorders_results(self, mock_vector_store, sample_search_results):
-        """_apply_mmr produces reordered list (same items, different order when diversity matters)."""
+    def test_apply_mmr_reorders_results(
+        self, mock_vector_store, sample_search_results
+    ):
+        """_apply_mmr produces reordered list."""
         r = Retriever(mock_vector_store, top_k=5)
-        # Use distinct embeddings so MMR can diversify
-        mock_vector_store.embedding_service.embed_text.return_value = [1.0, 0.0, 0.0, 0.0]
+        mock_vector_store.embedding_service.embed_text.return_value = [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
         mock_vector_store.embedding_service.embed_batch.side_effect = (
             lambda texts: [
                 [0.9, 0.1, 0.0, 0.0],
@@ -126,14 +154,23 @@ class TestRetrieverMMR:
                 [0.1, 0.1, 0.9, 0.0],
             ][: len(texts)]
         )
-        reranked = r._apply_mmr(sample_search_results, query="skills", lambda_param=0.5)
+        reranked = r._apply_mmr(
+            sample_search_results, query="skills", lambda_param=0.5
+        )
         assert len(reranked) == 3
         assert set(c["id"] for c in reranked) == {"c1", "c2", "c3"}
 
     def test_apply_mmr_single_result_unchanged(self, mock_vector_store):
         """_apply_mmr with single result returns it unchanged."""
         r = Retriever(mock_vector_store)
-        single = [{"id": "c1", "text": "Only chunk", "metadata": {}, "score": 0.9}]
+        single = [
+            {
+                "id": "c1",
+                "text": "Only chunk",
+                "metadata": {},
+                "score": 0.9,
+            }
+        ]
         result = r._apply_mmr(single, query="test", lambda_param=0.5)
         assert result == single
         mock_vector_store.embedding_service.embed_text.assert_not_called()
@@ -146,14 +183,14 @@ class TestRetrieverMMR:
         assert result == []
 
 
-# --- Context Formatting ---
-
-
+@pytest.mark.unit
 class TestRetrieverContextFormatting:
     """Test _format_context and get_context_for_llm output."""
 
-    def test_format_context_structure(self, mock_vector_store, sample_search_results):
-        """_format_context produces correct template: Document: X (Type: Y)\n{text}\n---"""
+    def test_format_context_structure(
+        self, mock_vector_store, sample_search_results
+    ):
+        """_format_context produces correct template."""
         r = Retriever(mock_vector_store)
         formatted = r._format_context(sample_search_results[:2])
         assert "Document:" in formatted
@@ -170,7 +207,12 @@ class TestRetrieverContextFormatting:
     def test_format_context_source_attribution(self, mock_vector_store):
         """_format_context includes doc_id and doc_type from metadata."""
         chunks = [
-            {"id": "x", "text": "Content", "metadata": {"doc_id": "res_123", "doc_type": "resume"}, "score": 0.9},
+            {
+                "id": "x",
+                "text": "Content",
+                "metadata": {"doc_id": "res_123", "doc_type": "resume"},
+                "score": 0.9,
+            },
         ]
         r = Retriever(mock_vector_store)
         formatted = r._format_context(chunks)
@@ -178,13 +220,13 @@ class TestRetrieverContextFormatting:
         assert "resume" in formatted
 
 
-# --- get_context_for_llm ---
-
-
+@pytest.mark.unit
 class TestGetContextForLLM:
     """Test get_context_for_llm."""
 
-    def test_get_context_returns_dict_with_keys(self, mock_vector_store, sample_search_results):
+    def test_get_context_returns_dict_with_keys(
+        self, mock_vector_store, sample_search_results
+    ):
         """get_context_for_llm returns dict with context, sources, total_chunks."""
         mock_vector_store.search.return_value = sample_search_results[:2]
         r = Retriever(mock_vector_store, top_k=5)
@@ -205,8 +247,10 @@ class TestGetContextForLLM:
         assert out["sources"] == []
         assert out["total_chunks"] == 0
 
-    def test_get_context_sources_have_required_fields(self, mock_vector_store, sample_search_results):
-        """Sources in get_context_for_llm include doc_id, doc_name, doc_type, chunk_text, relevance_score."""
+    def test_get_context_sources_have_required_fields(
+        self, mock_vector_store, sample_search_results
+    ):
+        """Sources include doc_id, doc_name, doc_type, chunk_text, relevance_score."""
         mock_vector_store.search.return_value = sample_search_results[:1]
         r = Retriever(mock_vector_store)
         out = r.get_context_for_llm("Python")
@@ -219,30 +263,33 @@ class TestGetContextForLLM:
         assert "relevance_score" in s
 
 
-# --- Token Limit Enforcement ---
-
-
+@pytest.mark.unit
 class TestTokenLimit:
     """Test token limit enforcement."""
 
     def test_estimate_tokens(self):
         """_estimate_tokens uses ~4 chars per token."""
         assert _estimate_tokens("") == 0
-        assert _estimate_tokens("abcd") == 1  # 4 chars -> 1 token
+        assert _estimate_tokens("abcd") == 1
         assert _estimate_tokens("a" * 40) == 10
 
     def test_get_context_respects_max_tokens(self, mock_vector_store):
         """get_context_for_llm truncates chunks to fit max_tokens."""
-        # Create chunks that would exceed a small token limit
-        long_chunk = {"id": "c1", "text": "x" * 2000, "metadata": {"doc_id": "d1", "doc_type": "resume"}, "score": 0.9}
+        long_chunk = {
+            "id": "c1",
+            "text": "x" * 2000,
+            "metadata": {"doc_id": "d1", "doc_type": "resume"},
+            "score": 0.9,
+        }
         mock_vector_store.search.return_value = [long_chunk]
         r = Retriever(mock_vector_store)
         out = r.get_context_for_llm("test", max_tokens=100)
-        # 100 tokens * 4 = 400 chars. One long chunk + header would exceed; should truncate
         estimated = _estimate_tokens(out["context"])
-        assert estimated <= 100 + CHARS_PER_TOKEN  # Allow small overshoot from rounding
+        assert estimated <= 100 + CHARS_PER_TOKEN
 
-    def test_get_context_includes_chunks_within_limit(self, mock_vector_store, sample_search_results):
+    def test_get_context_includes_chunks_within_limit(
+        self, mock_vector_store, sample_search_results
+    ):
         """get_context_for_llm includes all chunks when under limit."""
         mock_vector_store.search.return_value = sample_search_results
         r = Retriever(mock_vector_store)
@@ -253,9 +300,7 @@ class TestTokenLimit:
         assert "Chunk three" in out["context"]
 
 
-# --- Cosine Similarity ---
-
-
+@pytest.mark.unit
 class TestCosineSimilarity:
     """Test _cosine_similarity helper."""
 

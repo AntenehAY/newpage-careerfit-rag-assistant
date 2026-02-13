@@ -15,9 +15,7 @@ from app.retrieval.embeddings import (
 )
 
 
-# --- EmbeddingService: OpenAI model (mocked) ---
-
-
+@pytest.mark.unit
 class TestEmbeddingServiceOpenAI:
     """Test EmbeddingService with OpenAI model (mocked)."""
 
@@ -111,15 +109,27 @@ class TestEmbeddingServiceOpenAI:
         result = svc.embed_batch([])
         assert result == []
 
+    @patch("openai.OpenAI")
+    def test_embed_text_empty_string(self, mock_openai_class):
+        """embed_text with empty string returns empty or minimal embedding."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.embeddings.create.return_value = MagicMock(
+            data=[MagicMock(embedding=[0.0] * 384)],
+            usage=MagicMock(total_tokens=0),
+        )
+        svc = EmbeddingService(model_name=OPENAI_MODEL, api_key="sk-test")
+        result = svc.embed_text("")
+        assert isinstance(result, list)
+        assert len(result) == 384
 
-# --- EmbeddingService: local model (optional, skip if not installed) ---
 
-
+@pytest.mark.unit
 class TestEmbeddingServiceLocal:
     """Test EmbeddingService with local sentence-transformers."""
 
     @pytest.mark.skipif(
-        True,  # Skip by default to avoid downloading model in CI
+        True,
         reason="sentence-transformers optional; run with -k 'not Local' to skip",
     )
     def test_embed_text_local(self):
@@ -142,9 +152,7 @@ class TestEmbeddingServiceLocal:
         assert len(result[0]) == len(result[1])
 
 
-# --- VectorStore ---
-
-
+@pytest.mark.unit
 class TestVectorStore:
     """Test VectorStore with EphemeralClient."""
 
@@ -153,9 +161,9 @@ class TestVectorStore:
         """Use ChromaDB EphemeralClient for in-memory tests."""
         try:
             import chromadb
+
             return chromadb.EphemeralClient()
         except Exception as e:
-            # ChromaDB may fail on Python 3.14+ (Pydantic v1 compatibility)
             pytest.skip(f"ChromaDB not available: {e}")
 
     @pytest.fixture
@@ -236,7 +244,10 @@ class TestVectorStore:
             embedding_service=mock_embedding_service,
             chroma_client=chroma_client,
         )
-        texts = ["Python developer with 5 years experience.", "Java and SQL skills."]
+        texts = [
+            "Python developer with 5 years experience.",
+            "Java and SQL skills.",
+        ]
         store.add_documents(sample_chunks, texts)
         results = store.search("programming skills", top_k=2)
         assert len(results) <= 2

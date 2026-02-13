@@ -15,9 +15,7 @@ from app.rag.guardrails import (
 )
 
 
-# --- Query Validation ---
-
-
+@pytest.mark.unit
 class TestValidateQuery:
     """Test validate_query function."""
 
@@ -90,9 +88,7 @@ class TestValidateQuery:
         assert result["sanitized_query"] == ""
 
 
-# --- Response Validation ---
-
-
+@pytest.mark.unit
 class TestValidateResponse:
     """Test validate_response function."""
 
@@ -100,7 +96,13 @@ class TestValidateResponse:
         """Valid response with citations passes."""
         response = "Based on the documents [Source 1], you have strong Python skills."
         sources = [
-            {"doc_id": "d1", "doc_name": "Resume", "doc_type": "resume", "chunk_text": "x", "relevance_score": 0.9},
+            {
+                "doc_id": "d1",
+                "doc_name": "Resume",
+                "doc_type": "resume",
+                "chunk_text": "x",
+                "relevance_score": 0.9,
+            },
         ]
         result = validate_response(response, sources)
         assert result["valid"] is True
@@ -127,14 +129,20 @@ class TestValidateResponse:
     def test_response_with_inappropriate_content(self):
         """Response with profanity fails."""
         response = "You have great skills. piece of shit extra"
-        sources = [{"doc_id": "d1", "doc_name": "x", "doc_type": "resume", "chunk_text": "x", "relevance_score": 0.9}]
+        sources = [
+            {
+                "doc_id": "d1",
+                "doc_name": "x",
+                "doc_type": "resume",
+                "chunk_text": "x",
+                "relevance_score": 0.9,
+            }
+        ]
         result = validate_response(response, sources)
         assert result["valid"] is False
 
 
-# --- Rate Limiting ---
-
-
+@pytest.mark.unit
 class TestRateLimiter:
     """Test RateLimiter class."""
 
@@ -187,9 +195,7 @@ class TestRateLimiter:
         assert limiter.check_rate_limit("a") is True
 
 
-# --- Content Safety ---
-
-
+@pytest.mark.unit
 class TestCheckContentSafety:
     """Test check_content_safety function."""
 
@@ -217,9 +223,7 @@ class TestCheckContentSafety:
         assert "suspicious_pattern" in result["issues"]
 
 
-# --- Fallback Responses ---
-
-
+@pytest.mark.unit
 class TestGetFallbackResponse:
     """Test get_fallback_response function."""
 
@@ -245,28 +249,37 @@ class TestGetFallbackResponse:
     def test_inappropriate_content_message(self):
         """Inappropriate content has professional message."""
         resp = get_fallback_response("Inappropriate content detected")
-        assert "rephrase" in resp.answer.lower() or "professional" in resp.answer.lower()
+        assert (
+            "rephrase" in resp.answer.lower()
+            or "professional" in resp.answer.lower()
+        )
 
     def test_rate_limit_message(self):
         """Rate limit has appropriate message."""
         resp = get_fallback_response("Rate limit exceeded")
-        assert "try again" in resp.answer.lower() or "wait" in resp.answer.lower()
+        assert (
+            "try again" in resp.answer.lower() or "wait" in resp.answer.lower()
+        )
 
     def test_no_relevant_info_message(self):
         """No relevant info suggests uploading documents."""
         resp = get_fallback_response("No relevant information found")
-        assert "upload" in resp.answer.lower() or "documents" in resp.answer.lower()
+        assert (
+            "upload" in resp.answer.lower()
+            or "documents" in resp.answer.lower()
+        )
 
     def test_unknown_reason_uses_invalid_input(self):
         """Unknown reason falls back to Invalid input message."""
         resp = get_fallback_response("SomeUnknownReason")
         assert resp.answer
-        assert "rephras" in resp.answer.lower() or "invalid" in resp.answer.lower()
+        assert (
+            "rephras" in resp.answer.lower()
+            or "invalid" in resp.answer.lower()
+        )
 
 
-# --- Integration with RAGChain ---
-
-
+@pytest.mark.unit
 class TestGuardrailsIntegration:
     """Test guardrails integrated with RAGChain."""
 
@@ -277,7 +290,13 @@ class TestGuardrailsIntegration:
         ret.get_context_for_llm.return_value = {
             "context": "Resume: 5 years Python. JD: Requires Python.",
             "sources": [
-                {"doc_id": "d1", "doc_name": "Resume", "doc_type": "resume", "chunk_text": "x", "relevance_score": 0.9},
+                {
+                    "doc_id": "d1",
+                    "doc_name": "Resume",
+                    "doc_type": "resume",
+                    "chunk_text": "x",
+                    "relevance_score": 0.9,
+                },
             ],
             "total_chunks": 1,
         }
@@ -290,7 +309,9 @@ class TestGuardrailsIntegration:
         msg.content = "You have strong Python experience [Source 1]."
         return msg
 
-    def test_invalid_query_returns_fallback_without_retrieval(self, mock_retriever):
+    def test_invalid_query_returns_fallback_without_retrieval(
+        self, mock_retriever
+    ):
         """Too short query returns fallback, retriever not called."""
         with patch("app.rag.chain.ChatAnthropic"):
             chain = RAGChain(
@@ -310,7 +331,9 @@ class TestGuardrailsIntegration:
     def test_injection_query_returns_fallback(self, mock_retriever):
         """Injection attempt returns fallback without calling retriever."""
         with patch("app.rag.chain.ChatAnthropic"):
-            chain = RAGChain(retriever=mock_retriever, llm_model="test", api_key="test")
+            chain = RAGChain(
+                retriever=mock_retriever, llm_model="test", api_key="test"
+            )
             chain.llm = MagicMock()
 
             result = chain.answer_query("skills; DROP TABLE users")
@@ -319,10 +342,12 @@ class TestGuardrailsIntegration:
             assert isinstance(result, QueryResponse)
             assert result.sources == []
 
-    def test_rate_limit_returns_fallback(self, mock_retriever, mock_llm_response):
+    def test_rate_limit_returns_fallback(
+        self, mock_retriever, mock_llm_response
+    ):
         """When rate limited, returns fallback without processing."""
         limiter = RateLimiter(max_requests=1, window_seconds=60)
-        limiter.check_rate_limit("u1")  # Use up the one allowed request
+        limiter.check_rate_limit("u1")
 
         with patch("app.rag.chain.ChatAnthropic") as MockLLM:
             mock_instance = MagicMock()
@@ -340,9 +365,14 @@ class TestGuardrailsIntegration:
             result = chain.answer_query("What skills do I have?", user_id="u1")
 
             mock_retriever.get_context_for_llm.assert_not_called()
-            assert "try again" in result.answer.lower() or "wait" in result.answer.lower()
+            assert (
+                "try again" in result.answer.lower()
+                or "wait" in result.answer.lower()
+            )
 
-    def test_valid_query_with_rate_limiter_succeeds(self, mock_retriever, mock_llm_response):
+    def test_valid_query_with_rate_limiter_succeeds(
+        self, mock_retriever, mock_llm_response
+    ):
         """Valid query with rate limiter (under limit) succeeds."""
         limiter = RateLimiter(max_requests=10, window_seconds=60)
 
@@ -375,19 +405,25 @@ class TestGuardrailsIntegration:
             mock_instance.invoke.return_value = bad_msg
             MockLLM.return_value = mock_instance
 
-            chain = RAGChain(retriever=mock_retriever, llm_model="test", api_key="test")
+            chain = RAGChain(
+                retriever=mock_retriever, llm_model="test", api_key="test"
+            )
             chain.llm = mock_instance
 
             result = chain.answer_query("What skills do I have?")
 
-            # Output validation should catch the profanity and return fallback
             assert isinstance(result, QueryResponse)
-            assert "try again" in result.answer.lower() or "issue" in result.answer.lower()
+            assert (
+                "try again" in result.answer.lower()
+                or "issue" in result.answer.lower()
+            )
 
     def test_stream_invalid_query_yields_fallback(self, mock_retriever):
         """Stream with invalid query yields fallback message."""
         with patch("app.rag.chain.ChatAnthropic"):
-            chain = RAGChain(retriever=mock_retriever, llm_model="test", api_key="test")
+            chain = RAGChain(
+                retriever=mock_retriever, llm_model="test", api_key="test"
+            )
             chain.llm = MagicMock()
 
             chunks = list(chain.answer_query_stream("x"))

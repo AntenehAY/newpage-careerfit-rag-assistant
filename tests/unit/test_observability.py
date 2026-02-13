@@ -19,9 +19,7 @@ from app.utils.metrics import (
 )
 
 
-# --- Logging tests ---
-
-
+@pytest.mark.unit
 def test_setup_logging_creates_log_dir(tmp_path):
     """setup_logging creates logs directory and log file."""
     log_dir = tmp_path / "test_logs"
@@ -30,29 +28,28 @@ def test_setup_logging_creates_log_dir(tmp_path):
     assert (log_dir / "app.log").exists()
 
 
+@pytest.mark.unit
 def test_get_logger_returns_logger_with_module():
     """get_logger returns a logger bound with module name."""
     logger = get_logger("test.module")
     assert logger is not None
-    # Logger has bind method (loguru)
     assert hasattr(logger, "info")
     assert hasattr(logger, "debug")
     assert hasattr(logger, "warning")
     assert hasattr(logger, "error")
 
 
+@pytest.mark.unit
 def test_request_context():
     """set_request_context and clear_request_context work."""
-    set_request_context(request_id="req-123", user_id="user-1", operation="upload")
-    # Context is set; clear it
+    set_request_context(
+        request_id="req-123", user_id="user-1", operation="upload"
+    )
     clear_request_context()
-    # No exception means success
     set_request_context(request_id="req-456")
 
 
-# --- Metrics tests ---
-
-
+@pytest.mark.unit
 def test_metrics_collector_singleton():
     """MetricsCollector uses singleton pattern."""
     m1 = MetricsCollector()
@@ -61,6 +58,7 @@ def test_metrics_collector_singleton():
     assert get_metrics() is m1
 
 
+@pytest.mark.unit
 def test_record_ingestion():
     """record_ingestion updates metrics."""
     metrics = get_metrics()
@@ -70,15 +68,19 @@ def test_record_ingestion():
     assert summary["total_documents_ingested"] == initial + 1
 
 
+@pytest.mark.unit
 def test_record_retrieval():
     """record_retrieval updates metrics."""
     metrics = get_metrics()
     initial = metrics.get_metrics_summary()["total_queries_processed"]
-    metrics.record_retrieval(query="test query", duration=0.1, chunks_returned=5)
+    metrics.record_retrieval(
+        query="test query", duration=0.1, chunks_returned=5
+    )
     summary = metrics.get_metrics_summary()
     assert summary["total_queries_processed"] == initial + 1
 
 
+@pytest.mark.unit
 def test_record_llm_call():
     """record_llm_call updates tokens and cost."""
     metrics = get_metrics()
@@ -88,6 +90,7 @@ def test_record_llm_call():
     assert summary["total_cost_estimate_usd"] >= 0.0
 
 
+@pytest.mark.unit
 def test_record_llm_call_detailed():
     """record_llm_call_detailed calculates cost from input/output tokens."""
     metrics = get_metrics()
@@ -101,6 +104,7 @@ def test_record_llm_call_detailed():
     assert summary["total_output_tokens"] >= 200
 
 
+@pytest.mark.unit
 def test_record_api_request():
     """record_api_request updates counts and durations."""
     metrics = get_metrics()
@@ -109,6 +113,7 @@ def test_record_api_request():
     assert summary["total_api_requests"] >= 1
 
 
+@pytest.mark.unit
 def test_record_error():
     """record_error increments error count."""
     metrics = get_metrics()
@@ -118,6 +123,7 @@ def test_record_error():
     assert "test_error" in summary["errors_by_type"]
 
 
+@pytest.mark.unit
 def test_get_metrics_summary():
     """get_metrics_summary returns expected structure."""
     metrics = get_metrics()
@@ -132,6 +138,7 @@ def test_get_metrics_summary():
     assert "errors_by_type" in summary
 
 
+@pytest.mark.unit
 def test_export_to_file_json(tmp_path):
     """export_to_file saves metrics as JSON."""
     path = tmp_path / "metrics.json"
@@ -143,6 +150,7 @@ def test_export_to_file_json(tmp_path):
     assert "total_documents_ingested" in data
 
 
+@pytest.mark.unit
 def test_export_to_file_csv(tmp_path):
     """export_to_file saves metrics as CSV."""
     path = tmp_path / "metrics.csv"
@@ -153,12 +161,9 @@ def test_export_to_file_csv(tmp_path):
     assert "total_documents_ingested" in content
 
 
-# --- Cost calculation tests ---
-
-
+@pytest.mark.unit
 def test_estimate_llm_cost():
     """estimate_llm_cost calculates Claude pricing."""
-    # $3/1M input, $15/1M output
     cost = estimate_llm_cost(input_tokens=1_000_000, output_tokens=0)
     assert abs(cost - 3.0) < 0.001
     cost = estimate_llm_cost(input_tokens=0, output_tokens=1_000_000)
@@ -167,18 +172,16 @@ def test_estimate_llm_cost():
     assert 0 < cost < 0.02
 
 
+@pytest.mark.unit
 def test_estimate_embedding_cost():
     """estimate_embedding_cost calculates OpenAI embedding pricing."""
-    # $0.02/1M tokens
     cost = estimate_embedding_cost(1_000_000)
     assert abs(cost - 0.02) < 0.001
     cost = estimate_embedding_cost(1000)
     assert 0 < cost < 0.001
 
 
-# --- Integration: metrics endpoint ---
-
-
+@pytest.mark.unit
 def test_metrics_endpoint_returns_summary():
     """GET /metrics returns metrics summary."""
     from fastapi.testclient import TestClient
@@ -188,6 +191,6 @@ def test_metrics_endpoint_returns_summary():
     with TestClient(app) as client:
         response = client.get("/metrics")
         assert response.status_code == 200
-    data = response.json()
-    assert "total_documents_ingested" in data
-    assert "total_cost_estimate_usd" in data
+        data = response.json()
+        assert "total_documents_ingested" in data
+        assert "total_cost_estimate_usd" in data
