@@ -20,13 +20,15 @@ def ingest_document(
     doc_id: str,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    store_in_vector_db: bool = False,
 ) -> list[ChunkMetadata]:
     """Ingest a document: parse, chunk, and return chunks with full metadata.
 
     Steps:
     1. Parse document (PDF or DOCX) via parsers.py
     2. Chunk text via chunker.py with configurable size/overlap
-    3. Return list of ChunkMetadata with doc_id, doc_type, char_start, char_end, etc.
+    3. Optionally embed and store chunks in vector DB (when store_in_vector_db=True)
+    4. Return list of ChunkMetadata with doc_id, doc_type, char_start, char_end, etc.
 
     On any error, returns an empty list and logs the failure (does not crash).
 
@@ -36,6 +38,7 @@ def ingest_document(
         doc_id: Unique identifier for the document.
         chunk_size: Maximum characters per chunk.
         chunk_overlap: Overlap between consecutive chunks.
+        store_in_vector_db: If True, embed chunks and store in ChromaDB after ingestion.
 
     Returns:
         List of ChunkMetadata. Empty list on parse/chunk error.
@@ -65,6 +68,27 @@ def ingest_document(
         chunks = chunk_document(text, metadata, chunk_size, chunk_overlap)
         chunk_elapsed = time.perf_counter() - t_chunk
         logger.info("Stage 2 (chunk) completed in %.3fs: %d chunks", chunk_elapsed, len(chunks))
+
+        # Step 3 (optional): Store in vector DB
+        if store_in_vector_db and chunks:
+            try:
+                from app.retrieval.embeddings import EmbeddingService
+                from app.retrieval.vector_store import VectorStore
+
+                embedding_svc = EmbeddingService(
+                    model_name=settings.embedding_model_name,
+                    api_key=settings.openai_api_key,
+                )
+                vector_store = VectorStore(
+                    collection_name="careerfit_chunks",
+                    persist_directory=settings.vector_db_path,
+                    embedding_service=embedding_svc,
+                )
+                chunk_texts = [text[c.char_start : c.char_end] for c in chunks]
+                vector_store.add_documents(chunks, chunk_texts)
+                logger.info("Stored %d chunks in vector DB", len(chunks))
+            except Exception as e:
+                logger.exception("Vector DB storage failed (chunks still returned): %s", e)
 
         total_elapsed = time.perf_counter() - t0
         logger.info("Ingestion complete for %s in %.3fs total", path.name, total_elapsed)

@@ -1,6 +1,7 @@
 """Step 3: Document ingestion pipeline tests."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -163,6 +164,31 @@ class TestPipeline:
             chunk_overlap=50,
         )
         assert len(chunks_small) >= len(chunks_large)
+
+    @patch("app.retrieval.vector_store.VectorStore")
+    @patch("app.retrieval.embeddings.EmbeddingService")
+    def test_ingest_document_store_in_vector_db(
+        self,
+        mock_embedding_svc_class: MagicMock,  # 1st arg = EmbeddingService (inner patch)
+        mock_vector_store_class: MagicMock,  # 2nd arg = VectorStore (outer patch)
+        sample_jd_docx: Path,
+    ) -> None:
+        """ingest_document with store_in_vector_db=True calls VectorStore.add_documents."""
+        mock_store = MagicMock()
+        mock_vector_store_class.return_value = mock_store
+        assert sample_jd_docx.exists(), "Fixture sample_jd_docx must exist"
+        chunks = ingest_document(
+            str(sample_jd_docx),
+            doc_type="job_description",
+            doc_id="jd-vec",
+            store_in_vector_db=True,
+        )
+        assert len(chunks) >= 1, "Ingestion should produce chunks"
+        mock_vector_store_class.assert_called_once()
+        mock_store.add_documents.assert_called_once()
+        call_args = mock_store.add_documents.call_args
+        assert call_args[0][0] == chunks
+        assert len(call_args[0][1]) == len(chunks)
 
 
 class TestChunkerWithSampleText:
