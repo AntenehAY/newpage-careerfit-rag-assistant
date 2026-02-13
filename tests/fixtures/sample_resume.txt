@@ -1,0 +1,28 @@
+JANE DOE
+Senior Software Engineer
+jane.doe@email.com | (555) 123-4567 | linkedin.com/in/janedoe
+
+SUMMARY
+Results-driven software engineer with 8+ years of experience in full-stack development,
+cloud architecture, and team leadership. Proven track record of delivering scalable
+solutions at Fortune 500 companies.
+
+EXPERIENCE
+Senior Software Engineer | Tech Corp Inc. | 2020 - Present
+- Led migration of legacy monolithic system to microservices (reduced latency by 40%)
+- Architected REST APIs serving 2M+ daily requests
+- Mentored team of 5 junior developers
+
+Software Engineer | StartupXYZ | 2017 - 2020
+- Built real-time analytics dashboard using Python and React
+- Implemented CI/CD pipelines with Jenkins and Docker
+- Collaborated with product team on Agile sprints
+
+EDUCATION
+M.S. Computer Science | Stanford University | 2017
+B.S. Electrical Engineering | MIT | 2015
+
+SKILLS
+Programming: Python, JavaScript, TypeScript, Java, Go
+Cloud: AWS, GCP, Kubernetes, Docker, Terraform
+Databases: PostgreSQL, MongoDB, Redis
