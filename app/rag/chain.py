@@ -11,6 +11,12 @@ from langchain_anthropic import ChatAnthropic
 from app.config import settings
 from app.models import QueryResponse, SourceReference
 
+from .guardrails import (
+    RateLimiter,
+    get_fallback_response,
+    validate_query,
+    validate_response,
+)
 from .prompts import get_prompt_for_type
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,7 @@ class RAGChain:
         llm_model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: Optional[float] = None,
+        rate_limiter: Optional[RateLimiter] = None,
     ) -> None:
         """Initialize the RAG chain.
 
@@ -48,8 +55,10 @@ class RAGChain:
             llm_model: Override LLM model name. Defaults to settings.LLM_MODEL_NAME.
             api_key: Override Anthropic API key. Defaults to settings.anthropic_api_key.
             temperature: Override temperature. Defaults to settings.llm_temperature (0.3).
+            rate_limiter: Optional RateLimiter for request throttling.
         """
         self.retriever = retriever
+        self.rate_limiter = rate_limiter
         self.llm_model = llm_model or settings.llm_model_name
         self.api_key = api_key or settings.anthropic_api_key
         self.temperature = temperature if temperature is not None else settings.llm_temperature
@@ -71,6 +80,7 @@ class RAGChain:
         query: str,
         filter_doc_type: Optional[str] = None,
         filter_doc_id: Optional[str] = None,
+        user_id: str = "default",
     ) -> QueryResponse:
         """Answer a query using retrieval-augmented generation.
 
@@ -78,16 +88,29 @@ class RAGChain:
             query: User question.
             filter_doc_type: Optional filter (resume, job_description).
             filter_doc_id: Optional filter by document ID.
+            user_id: User identifier for rate limiting. Default: "default".
 
         Returns:
             QueryResponse with answer, sources, and metadata.
         """
         t_total = time.perf_counter()
 
+        # Step 0: Input validation
+        validation = validate_query(query)
+        if not validation["valid"]:
+            return get_fallback_response(validation["reason"])
+
+        # Step 0b: Rate limiting
+        if self.rate_limiter is not None:
+            if not self.rate_limiter.check_rate_limit(user_id):
+                return get_fallback_response("Rate limit exceeded")
+
+        query_to_use = validation["sanitized_query"]
+
         # Step 1: Retrieve context
         t_ret = time.perf_counter()
         context_result = self.retriever.get_context_for_llm(
-            query=query,
+            query=query_to_use,
             filter_doc_type=filter_doc_type,
             filter_doc_id=filter_doc_id,
         )
@@ -96,21 +119,15 @@ class RAGChain:
         sources_raw = context_result["sources"]
 
         if not context or not context.strip():
-            logger.warning("No context retrieved for query: %s", query[:80])
-            return QueryResponse(
-                answer="I could not find relevant documents to answer your question. "
-                "Please ensure your resume and/or job description are uploaded.",
-                sources=[],
-                confidence=0.0,
-                generated_at=datetime.now(timezone.utc),
-            )
+            logger.warning("No context retrieved for query (len=%d)", len(query_to_use))
+            return get_fallback_response("No relevant information found")
 
         # Step 2: Detect query type and select prompt
-        query_type = self._detect_query_type(query)
+        query_type = self._detect_query_type(query_to_use)
         prompt_template = self._select_prompt_template(query_type)
 
         # Step 3: Format prompt with context
-        messages = prompt_template.format_messages(context=context, query=query)
+        messages = prompt_template.format_messages(context=context, query=query_to_use)
 
         # Step 4: Call LLM
         t_llm = time.perf_counter()
@@ -145,10 +162,16 @@ class RAGChain:
             time.perf_counter() - t_total,
         )
 
-        # Step 5: Parse response and map citations to sources
-        parsed = self._parse_response(llm_output, sources_raw)
+        # Step 5: Output validation
+        output_validation = validate_response(llm_output, sources_raw)
+        if not output_validation["valid"]:
+            logger.warning("Response validation failed: %s", output_validation["reason"])
+            return get_fallback_response(output_validation["reason"])
 
-        # Step 6: Return QueryResponse
+        # Step 6: Parse response and map citations to sources
+        parsed = self._parse_response(output_validation["safe_response"], sources_raw)
+
+        # Step 7: Return QueryResponse
         return QueryResponse(
             answer=parsed["answer"],
             sources=parsed["sources"],
@@ -161,25 +184,42 @@ class RAGChain:
         query: str,
         filter_doc_type: Optional[str] = None,
         filter_doc_id: Optional[str] = None,
+        user_id: str = "default",
     ):
         """Stream the LLM response for a query (generator of text chunks).
 
         Yields:
             str: Text chunks as they are generated by the LLM.
         """
+        # Input validation
+        validation = validate_query(query)
+        if not validation["valid"]:
+            fallback = get_fallback_response(validation["reason"])
+            yield fallback.answer
+            return
+
+        # Rate limiting
+        if self.rate_limiter is not None:
+            if not self.rate_limiter.check_rate_limit(user_id):
+                fallback = get_fallback_response("Rate limit exceeded")
+                yield fallback.answer
+                return
+
+        query_to_use = validation["sanitized_query"]
         context_result = self.retriever.get_context_for_llm(
-            query=query,
+            query=query_to_use,
             filter_doc_type=filter_doc_type,
             filter_doc_id=filter_doc_id,
         )
         context = context_result["context"]
         if not context or not context.strip():
-            yield "I could not find relevant documents. Please ensure your resume and job description are uploaded."
+            fallback = get_fallback_response("No relevant information found")
+            yield fallback.answer
             return
 
-        query_type = self._detect_query_type(query)
+        query_type = self._detect_query_type(query_to_use)
         prompt_template = self._select_prompt_template(query_type)
-        messages = prompt_template.format_messages(context=context, query=query)
+        messages = prompt_template.format_messages(context=context, query=query_to_use)
 
         for chunk in self.llm.stream(messages):
             if hasattr(chunk, "content") and chunk.content:
