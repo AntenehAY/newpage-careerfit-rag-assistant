@@ -4,6 +4,57 @@ Design decisions log for the Career Intelligence Assistant project.
 
 ---
 
+## Step 12 - Docker Multi-Stage Build (2025-02-13)
+
+### Context
+Production deployment required a secure, minimal Docker image for the API and UI services.
+
+### Decision
+- **Multi-stage build**: Stage 1 (builder) installs Python deps in a venv; Stage 2 (runtime) copies only the venv and app code.
+- **Rationale**: Smaller final image (~400MB vs 1.5GB+), faster layer caching, reduced attack surface.
+- **Non-root user**: `appuser` (uid 1000) runs the application; avoids running as root.
+- **Runtime deps**: Only `libmagic1` for document type detection; no build tools in final image.
+
+### Consequences
+- Smaller images for faster pulls and deploys.
+- Security best practice for containers.
+
+---
+
+## Step 12 - Health Check Implementation (2025-02-13)
+
+### Context
+Docker Compose and orchestration need to know when the API is ready and healthy.
+
+### Decision
+- **Endpoint**: `GET /health` (root-level) performs component checks: vector DB connection, embedding service (lightweight cached embed), disk space.
+- **Response**: `{ "status": "ok" | "degraded", "components": { ... } }`.
+- **Docker HEALTHCHECK**: Uses Python `urllib.request.urlopen` to call `/health`; interval 30s, timeout 10s, start_period 40s, retries 3.
+- **UI depends_on**: `condition: service_healthy` so UI only starts after API is ready.
+
+### Consequences
+- Orchestration can detect unhealthy containers.
+- UI avoids connecting to a not-yet-ready API.
+
+---
+
+## Step 12 - Volume Mount Strategy (2025-02-13)
+
+### Context
+Vector DB, uploaded files, document registry, and logs must persist across container restarts.
+
+### Decision
+- **Named volumes**: `careerfit_data` (vectordb, uploads, registry) and `careerfit_logs` (app logs).
+- **Paths**: `/app/data` and `/app/logs` inside container.
+- **Alternative**: Bind mounts (`./data:/app/data`) for host-accessible data during development.
+- **Backup**: Documented `tar` commands for volume backup/restore in DEPLOYMENT.md.
+
+### Consequences
+- Data survives `docker-compose down`; only `docker-compose down -v` removes volumes.
+- Backup/restore procedures available for production.
+
+---
+
 ## Step 11 - Testing Approach (2025-02-13)
 
 ### Context
