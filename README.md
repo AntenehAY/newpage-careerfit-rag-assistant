@@ -461,6 +461,7 @@ MIT (or as appropriate for your submission)
 
 ## Contact
 
-- **Name**: [Your Name]
-- **Email**: [Your Email]
-- **GitHub**: [Your Profile]
+**Developer:** Anteneh Addisu Yimer  
+**Email:** anteneh.yimer@gmail.com  
+**GitHub:** https://github.com/AntenehAY  
+**Repository:** https://github.com/AntenehAY/newpage-careerfit-rag-assistant
